@@ -47,29 +47,6 @@ def verify_password(plain_password_w_salt, hashed_password):
     return checked_password == hashed_password
 
 
-async def insert_message(message, sender, room_name):
-    client = await get_nosql_db()
-    db = client[MONGODB_DB_NAME]
-    rooms_collection = db.rooms
-    # messages_collection = db.messages
-
-    message_body = {}
-    sender_in_db = await get_user(sender)
-    message_body["user"] = sender_in_db
-    message_body["content"] = message
-    dbmessage = MessageInDB(**message_body)
-    # message_upload = await messages_collection.insert_one(dbmessage.dict())
-    room_update = await rooms_collection.update_one(
-        {"room_name": room_name}, {"$push": {"messages": dbmessage.dict()}, "$set": {"last_pinged": datetime.utcnow()}},
-    )
-    status_message = {
-        # "message_id_inserted": str(message_upload.inserted_id),
-        "room_updated": str(room_update.raw_result),
-    }
-    write_notification(status_message)
-    return status_message
-
-
 def write_notification(message):
     with open("messages.log", mode="a+") as _file:
         content = f"{datetime.utcnow()}: {message}\n"
@@ -127,8 +104,16 @@ async def update_server_text(new_text, doc_id):
     client = await get_nosql_db()
     db = client[MONGODB_DB_NAME]
     collection = db.documents
-    row = await collection.update_one({"doc_id": doc_id}, {"$inc": {"text": new_text}})
-    return True if row is not None else False
+    original_record = await get_document_by_doc_id(doc_id)
+    if original_record is not None:
+        old_text = original_record["text"]
+        if old_text != new_text:
+            row = await collection.update_one({"doc_id": doc_id}, {"$set": {"text": new_text}})
+            return True if row is not None else False
+        else:
+            return True
+    else:
+        return False
 
 
 async def get_or_create_document_from_server(document_id):
@@ -138,7 +123,7 @@ async def get_or_create_document_from_server(document_id):
 
     row = await collection.find_one({"doc_id": document_id})
     if row is not None:
-        return DocumentInDB(**row).dict()
+        return DocumentInDB(**row).dict()["text"]
     else:
         # create empty document
         new_body = {}
@@ -146,4 +131,4 @@ async def get_or_create_document_from_server(document_id):
         new_body["doc_id"] = document_id
         dbdoc = DocumentInDB(**new_body).dict()
         row = await collection.insert_one(dbdoc)
-        return row["text"]
+        return dbdoc["text"] if row["acknowledged"] else None

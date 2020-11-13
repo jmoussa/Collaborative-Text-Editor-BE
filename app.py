@@ -79,12 +79,13 @@ async def startup_event():
     client = await get_nosql_db()
     db = client[MONGODB_DB_NAME]
     try:
-        await db.create_collection("users")
         await db.create_collection("documents")
-        user_collection = db.users
         document_collection = db.documents
-        await user_collection.create_index("username", name="username", unique=True)
         await document_collection.create_index("doc_id", name="doc_id", unique=True)
+
+        await db.create_collection("users")
+        user_collection = db.users
+        await user_collection.create_index("username", name="username", unique=True)
     except pymongo.errors.CollectionInvalid as e:
         logging.info(e)
         pass
@@ -149,10 +150,13 @@ async def websocket_endpoint(websocket: WebSocket, room_name, background_tasks: 
             doc_id = room_name
             server = await get_or_create_document_from_server(doc_id)
             if server is not None:
+                logging.warn(f"Server\t{server}\nClient:\t{dict_data['editorState']}")
                 patches = dmp.patch_make(server, dict_data["editorState"])
                 new_text, _ = dmp.patch_apply(patches, server)
                 server = new_text
                 await update_server_text(new_text, doc_id)
                 await notifier.push(f"{server}")
+            else:
+                logging.error("SERVER returned None")
     except WebSocketDisconnect:
         print("Websocket Disconnected")
