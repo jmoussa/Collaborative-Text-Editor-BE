@@ -18,12 +18,12 @@ class UserInResponse(User):
     token: str
 
 
-class Message(BaseModel):
-    user: UserInDB
-    content: str = None
+class Document(BaseModel):
+    doc_id: str
+    text: str
 
 
-class MessageInDB(Message):
+class DocumentInDB(Document):
     _id: ObjectId
     timestamp: datetime = Field(default_factory=datetime.utcnow)
 

@@ -1,6 +1,6 @@
 import hashlib
 import uuid
-from models import User, UserInDB, MessageInDB, TokenPayload
+from models import User, UserInDB, DocumentInDB, TokenPayload
 import jwt
 
 # from bson import ObjectId
@@ -110,3 +110,40 @@ async def _get_current_user(
 
     user = User(**dbuser.dict(), token=token)
     return user
+
+
+async def get_document_by_doc_id(doc_id):
+    client = await get_nosql_db()
+    db = client[MONGODB_DB_NAME]
+    collection = db.documents
+    row = await collection.find_one({"doc_id": doc_id})
+    if row is not None:
+        return DocumentInDB(**row).dict()
+    else:
+        return None
+
+
+async def update_server_text(new_text, doc_id):
+    client = await get_nosql_db()
+    db = client[MONGODB_DB_NAME]
+    collection = db.documents
+    row = await collection.update_one({"doc_id": doc_id}, {"$inc": {"text": new_text}})
+    return True if row is not None else False
+
+
+async def get_or_create_document_from_server(document_id):
+    client = await get_nosql_db()
+    db = client[MONGODB_DB_NAME]
+    collection = db.documents
+
+    row = await collection.find_one({"doc_id": document_id})
+    if row is not None:
+        return DocumentInDB(**row).dict()
+    else:
+        # create empty document
+        new_body = {}
+        new_body["text"] = ""
+        new_body["doc_id"] = document_id
+        dbdoc = DocumentInDB(**new_body).dict()
+        row = await collection.insert_one(dbdoc)
+        return row["text"]

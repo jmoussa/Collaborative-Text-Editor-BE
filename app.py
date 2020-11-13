@@ -7,6 +7,8 @@ from pydantic import BaseModel
 
 from fastapi import FastAPI, WebSocket, Depends, BackgroundTasks
 
+from diff_match_patch import diff_match_patch
+
 from starlette.websockets import WebSocketDisconnect
 from starlette.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException
@@ -19,6 +21,8 @@ from controllers import (
     get_user,
     verify_password,
     create_access_token,
+    get_or_create_document_from_server,
+    update_server_text,
 )
 from models import UserInResponse
 
@@ -48,24 +52,22 @@ class Notifier:
     async def get_notification_generator(self):
         while True:
             message = yield
-            msg = message["editorState"]
-            username = message["username"]
-            await self._notify(msg, username)
+            if message is not None:
+                await self._notify(str(message))
 
-    async def push(self, msg: str, username: str = None):
-        message_body = {"editorState": msg, "username": username}
-        await self.generator.asend(message_body)
+    async def push(self, msg: str):
+        logging.info(f"push message: {msg}")
+        if msg is not None:
+            await self.generator.asend(msg)
 
     async def connect(self, websocket: WebSocket, room_name: str):
         await websocket.accept()
 
-    def remove(self, websocket: WebSocket, username: str):
-        print(f"{username} left.")
-
-    async def _notify(self, message: str, username: str):
+    async def _notify(self, message: str):
         websocket = self.websocket
         if websocket is not None:
-            await websocket.send_text(str({"editorState": message, "username": username}))
+            logging.info(f"_notify message: {message}")
+            await websocket.send_text(message)
 
 
 notifier = Notifier()
@@ -77,11 +79,12 @@ async def startup_event():
     client = await get_nosql_db()
     db = client[MONGODB_DB_NAME]
     try:
-        # await notifier.generator.asend("Hello There. ^_^")
-
         await db.create_collection("users")
+        await db.create_collection("documents")
         user_collection = db.users
+        document_collection = db.documents
         await user_collection.create_index("username", name="username", unique=True)
+        await document_collection.create_index("doc_id", name="doc_id", unique=True)
     except pymongo.errors.CollectionInvalid as e:
         logging.info(e)
         pass
@@ -122,25 +125,34 @@ async def register_user(request: RegisterRequest, client: AsyncIOMotorClient = D
 async def login_user(request: RegisterRequest, client: AsyncIOMotorClient = Depends(get_nosql_db)):
     db = client[MONGODB_DB_NAME]
     collection = db.users
-    dbuser = await get_user(request.username, collection=collection)
+    dbuser = await get_user(request["username"], collection=collection)
     if not dbuser or not verify_password((request.password + dbuser["salt"]), dbuser["hashed_password"]):
         raise HTTPException(status_code=HTTP_400_BAD_REQUEST, detail="Incorrect email or password")
     else:
         token = create_access_token(data={"username": dbuser["username"]})
         print(f"LOGIN: {token}")
         return UserInResponse(**dbuser, token=token)
-        # return get_main(request, token, dbuser)
 
 
 @app.websocket("/ws/{room_name}")
 async def websocket_endpoint(websocket: WebSocket, room_name, background_tasks: BackgroundTasks):
     notifier.set_websocket(websocket)
     await notifier.connect(websocket, room_name)
-    await notifier.generator.asend("Hello There. ^_^")
+    await notifier.generator.asend(None)
     try:
         while True:
-            data = await websocket.receive_text()
-            state = json.loads(data)
-            await notifier.push(f"{state.editorState}", state.username)
+            str_data = await websocket.receive_text()
+            logging.info(f"RECIEVED: {str_data}")
+            dict_data = json.loads(str_data)
+            # PERFORM DIFF_MATCH_PATCH HERE AND RETURN PATCHED VERSION
+            dmp = diff_match_patch()
+            doc_id = room_name
+            server = await get_or_create_document_from_server(doc_id)
+            if server is not None:
+                patches = dmp.patch_make(server, dict_data["editorState"])
+                new_text, _ = dmp.patch_apply(patches, server)
+                server = new_text
+                await update_server_text(new_text, doc_id)
+                await notifier.push(f"{server}")
     except WebSocketDisconnect:
-        notifier.remove(websocket, data.username)
+        print("Websocket Disconnected")
