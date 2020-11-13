@@ -52,12 +52,11 @@ class Notifier:
     async def get_notification_generator(self):
         while True:
             message = yield
-            if message is not None:
-                await self._notify(str(message))
+            await self._notify(str(message))
 
     async def push(self, msg: str):
-        logging.info(f"push message: {msg}")
-        if msg is not None:
+        websocket = self.websocket
+        if msg is not None and websocket is not None:
             await self.generator.asend(msg)
 
     async def connect(self, websocket: WebSocket, room_name: str):
@@ -65,8 +64,7 @@ class Notifier:
 
     async def _notify(self, message: str):
         websocket = self.websocket
-        if websocket is not None:
-            logging.info(f"_notify message: {message}")
+        if message is not None and websocket is not None:
             await websocket.send_text(message)
 
 
@@ -139,7 +137,10 @@ async def login_user(request: RegisterRequest, client: AsyncIOMotorClient = Depe
 async def websocket_endpoint(websocket: WebSocket, room_name, background_tasks: BackgroundTasks):
     notifier.set_websocket(websocket)
     await notifier.connect(websocket, room_name)
+    doc_id = room_name
+    server = await get_or_create_document_from_server(doc_id)
     await notifier.generator.asend(None)
+    await notifier.push(server)
     try:
         while True:
             str_data = await websocket.receive_text()
@@ -147,10 +148,8 @@ async def websocket_endpoint(websocket: WebSocket, room_name, background_tasks: 
             dict_data = json.loads(str_data)
             # PERFORM DIFF_MATCH_PATCH HERE AND RETURN PATCHED VERSION
             dmp = diff_match_patch()
-            doc_id = room_name
             server = await get_or_create_document_from_server(doc_id)
             if server is not None:
-                logging.warn(f"Server\t{server}\nClient:\t{dict_data['editorState']}")
                 patches = dmp.patch_make(server, dict_data["editorState"])
                 new_text, _ = dmp.patch_apply(patches, server)
                 server = new_text
