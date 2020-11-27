@@ -57,7 +57,8 @@ class Notifier:
     async def push(self, msg: str):
         websocket = self.websocket
         if msg is not None and websocket is not None:
-            await self.generator.asend(msg)
+            logging.info(f"SENDING: ({msg})")
+            await websocket.send_text(msg)
 
     async def connect(self, websocket: WebSocket, room_name: str):
         await websocket.accept()
@@ -65,7 +66,9 @@ class Notifier:
     async def _notify(self, message: str):
         websocket = self.websocket
         if message is not None and websocket is not None:
-            await websocket.send_text(message)
+            logging.info(f"NOTIFY: {message}")
+            await self.generator.asend(message)
+            # await websocket.send_text(message)
 
 
 notifier = Notifier()
@@ -139,8 +142,8 @@ async def websocket_endpoint(websocket: WebSocket, room_name, background_tasks: 
     await notifier.connect(websocket, room_name)
     doc_id = room_name
     server = await get_or_create_document_from_server(doc_id)
-    await notifier.generator.asend(None)
-    await notifier.push(server)
+    # await notifier.generator.asend(None)
+    await notifier.push(str(server))
     try:
         while True:
             str_data = await websocket.receive_text()
@@ -154,7 +157,7 @@ async def websocket_endpoint(websocket: WebSocket, room_name, background_tasks: 
                 new_text, _ = dmp.patch_apply(patches, server)
                 server = new_text
                 await update_server_text(new_text, doc_id)
-                await notifier.push(f"{server}")
+                await notifier.push(str(server))
             else:
                 logging.error("SERVER returned None")
     except WebSocketDisconnect:
