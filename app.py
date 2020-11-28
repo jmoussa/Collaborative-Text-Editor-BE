@@ -57,7 +57,7 @@ class Notifier:
     async def push(self, msg: str):
         websocket = self.websocket
         if msg is not None and websocket is not None:
-            logging.info(f"SENDING: ({msg})")
+            logging.info(f"PUSHING: ({msg})")
             await websocket.send_text(msg)
 
     async def connect(self, websocket: WebSocket, room_name: str):
@@ -136,14 +136,20 @@ async def login_user(request: RegisterRequest, client: AsyncIOMotorClient = Depe
         return UserInResponse(**dbuser, token=token)
 
 
+@app.get("/document/{room_name}")
+async def get_initial_server_content(room_name, Background_tasks: BackgroundTasks):
+    server = await get_or_create_document_from_server(room_name)
+    return server    
+
 @app.websocket("/ws/{room_name}")
 async def websocket_endpoint(websocket: WebSocket, room_name, background_tasks: BackgroundTasks):
     notifier.set_websocket(websocket)
     await notifier.connect(websocket, room_name)
     doc_id = room_name
     server = await get_or_create_document_from_server(doc_id)
-    # await notifier.generator.asend(None)
+    logging.info(f"SENDING INITIAL SERVER STATE: {server}")
     await notifier.push(str(server))
+
     try:
         while True:
             str_data = await websocket.receive_text()
